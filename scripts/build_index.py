@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Build the tabbed index.html for a ticket diagram pack.
+
+Usage: build_index.py <pack-dir>/manifest.json [--mode tabs|bundle|auto] [--default-era ID]
+
+manifest.json:
+{
+  "title": "Order cancel · PROJ-123",             # header + <title>
+  "lang": "en",                                    # optional <html lang>, default "en"
+  "note": "Checked against origin/main (...). Not a statement about production.",
+  "eras": [{"id": "before", "label": "Before"}, {"id": "after", "label": "After"}],  # optional
+  "default_era": "after",                          # optional, defaults to the last era
+  "tabs": [
+    {"label": "1 · App", "file": "app-cancel.html"},                       # same in every era
+    {"label": "Servers", "files": {"before": "servers-before.html",
+                                   "after": "servers-after.html"}}         # varies by era
+  ],
+  "mode": "auto"                                   # optional; CLI flag wins
+}
+
+tabs   = small index, iframe src -> sibling files. Opens from disk, needs the folder.
+bundle = every page inlined via srcdoc into one sandboxed file. Send as one file.
+auto   = bundle when there are eras or more than 4 distinct pages, else tabs.
+"""
+import html
+import json
+import re
+import sys
+from pathlib import Path
+
+CSS = """*{box-sizing:border-box}
+:root{--bg:#0b1220;--fg:#e8effb;--muted:#b4c4d9;--line:#2c3c54;--btn:#18273a;--acc:#65d4f0;--ok:#7ce1b8}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;height:100vh;display:flex;flex-direction:column}
+header{padding:6px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:17px;margin:0}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+button{background:var(--btn);color:var(--fg);border:1px solid var(--line);padding:5px 10px;border-radius:8px;cursor:pointer;font:inherit}
+button[aria-selected=true]{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* One line by default so diagrams keep the height they were checked at; click to read in full. */
+p{margin:0;padding:3px 16px 5px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+p[aria-expanded=true]{white-space:normal}
+iframe{flex:1;min-height:0;width:100%;border:0;display:block;background:var(--bg)}"""
+
+CSP = ("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+       "script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'self' about:; "
+       # srcdoc pages inherit this policy: Archify inlines woff2 fonts and rasterises exports via blob: URLs.
+       "font-src data:; img-src data: blob:;\">")
+
+JS = """const tabs=TABS,eras=ERAS,docs=DOCS;let era=DEFAULT_ERA,tab=0;
+function pick(t){return t.file||t.files[era]}
+function show(){const t=tabs[tab],f=pick(t),v=document.getElementById('v');
+if(docs)v.srcdoc=docs[f];else v.src=f;
+document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',+b.dataset.tab===tab));
+document.querySelectorAll('[data-era]').forEach(b=>{b.setAttribute('aria-selected',b.dataset.era===era);b.disabled=!!t.file});}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=+b.dataset.tab;show()});
+document.querySelectorAll('[data-era]').forEach(b=>b.onclick=()=>{era=b.dataset.era;show()});
+const n=document.querySelector('p[role=button]');
+if(n){const t=()=>n.setAttribute('aria-expanded',n.getAttribute('aria-expanded')!=='true');
+n.onclick=t;n.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();t()}}}
+show();"""
+
+
+def js_literal(value):
+    # `<` escaped so an inlined page can never close our <script> early.
+    return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
+
+
+def build(manifest_path, mode=None, default_era=None):
+    try:
+        return _build(manifest_path, mode, default_era)
+    except (KeyError, TypeError, AttributeError, ValueError, OSError) as e:  # JSONDecodeError is a ValueError
+        sys.exit(f"manifest {manifest_path}: {type(e).__name__}: {e}")
+
+
+def _build(manifest_path, mode, default_era):
+    manifest_path = Path(manifest_path)
+    pack = manifest_path.parent
+    m = json.loads(manifest_path.read_text(encoding="utf-8"))
+    eras = m.get("eras") or []
+    tabs = m.get("tabs") or sys.exit("manifest needs at least one tab")
+    if not isinstance(eras, list) or not isinstance(tabs, list):
+        sys.exit("manifest: 'eras' and 'tabs' must be lists")
+    era_ids = [e["id"] for e in eras]
+    if len(set(era_ids)) != len(era_ids):
+        sys.exit(f"duplicate era ids: {era_ids}")
+
+    files = []
+    for t in tabs:
+        if ("file" in t) == ("files" in t):
+            sys.exit(f"tab {t.get('label')!r}: give exactly one of 'file' or 'files'")
+        if "files" in t:
+            if not eras or set(t["files"]) != set(era_ids):
+                sys.exit(f"tab {t['label']!r}: 'files' keys must be exactly the era ids {era_ids}")
+            files += t["files"].values()
+        else:
+            files.append(t["file"])
+    files = list(dict.fromkeys(files))
+    for f in files:
+        if Path(f).is_absolute() or ".." in Path(f).parts:
+            sys.exit(f"page must be a path inside the pack: {f}")
+        if Path(f) == Path("index.html"):
+            sys.exit(f"index.html is the output, not a page: {f}")
+        if not (pack / f).is_file():
+            sys.exit(f"missing page: {pack / f}")
+        # A symlink must not pull a file from outside the pack into a shared bundle.
+        if pack.resolve() not in (pack / f).resolve().parents:
+            sys.exit(f"page resolves outside the pack: {f}")
+
+    mode = mode or m.get("mode", "auto")
+    if mode == "auto":
+        mode = "bundle" if eras or len(files) > 4 else "tabs"
+    if mode not in ("tabs", "bundle"):
+        sys.exit(f"unknown mode: {mode}")
+
+    docs = None
+    if mode == "bundle":
+        docs = {}
+        for f in files:
+            try:
+                docs[f] = (pack / f).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                sys.exit(f"page is not UTF-8: {f}")
+    if (default_era or m.get("default_era")) and not eras:
+        sys.exit("default era given, but the manifest has no eras")
+    default_era = default_era or m.get("default_era") or (era_ids[-1] if era_ids else None)
+    if eras and default_era not in era_ids:
+        sys.exit(f"default_era {default_era!r} is not one of {era_ids}")
+
+    esc = html.escape
+    era_nav = "".join(f'<button data-era="{esc(e["id"])}">{esc(e["label"])}</button>' for e in eras)
+    tab_nav = "".join(f'<button role="tab" data-tab="{i}">{esc(t["label"])}</button>' for i, t in enumerate(tabs))
+    # One pass: a label containing "DOCS" must not be rewritten by a later substitution.
+    subs = {"TABS": tabs, "ERAS": eras, "DEFAULT_ERA": default_era, "DOCS": docs}
+    script = re.sub(r"\b(TABS|ERAS|DEFAULT_ERA|DOCS)\b", lambda x: js_literal(subs[x.group()]), JS)
+    sandbox = ' sandbox="allow-scripts allow-downloads"' if docs else ""
+    out = (
+        f'<!doctype html><html lang="{esc(m.get("lang", "en"))}"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        + (CSP if docs else "")
+        + f"<title>{esc(m['title'])}</title><style>{CSS}</style></head><body>"
+        f"<header><h1>{esc(m['title'])}</h1>"
+        + (f"<nav>{era_nav}</nav>" if eras else "")
+        + f"<nav role=\"tablist\">{tab_nav}</nav></header>"
+        + (f'<p tabindex="0" role="button" aria-expanded="false" title="{esc(m["note"])}">{esc(m["note"])}</p>'
+           if m.get("note") else "")
+        + f'<iframe id="v" title="{esc(m["title"])}"{sandbox}></iframe>'
+        f"<script>{script}</script></body></html>"
+    )
+    target = pack / "index.html"
+    target.write_text(out, encoding="utf-8")
+    return target, mode, len(files), target.stat().st_size
+
+
+def _selfcheck():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        for n in ("a.html", "b1.html", "b2.html"):
+            (d / n).write_text(f"<html><script>x='</script>'</script>{n}</html>")
+        man = {"title": "T <x>", "note": "n", "tabs": [{"label": "A", "file": "a.html"}]}
+        (d / "manifest.json").write_text(json.dumps(man))
+        _, mode, n, _ = build(d / "manifest.json")
+        assert (mode, n) == ("tabs", 1)
+        assert "srcdoc" not in (d / "index.html").read_text().split("<script>")[0]
+        man["eras"] = [{"id": "b", "label": "До"}, {"id": "a", "label": "После"}]
+        man["tabs"].append({"label": "DOCS TABS", "files": {"b": "b1.html", "a": "b2.html"}})
+        (d / "manifest.json").write_text(json.dumps(man))
+        _, mode, n, _ = build(d / "manifest.json")
+        out = (d / "index.html").read_text()
+        assert (mode, n) == ("bundle", 3)
+        assert out.count("</script>") == 1, "inlined page leaked a </script>"
+        assert "T &lt;x&gt;" in out and "font-src data:" in out
+        assert '"label": "DOCS TABS"' in out, "placeholder substituted inside a label"
+
+        def rejects(manifest, needle, **kw):
+            (d / "manifest.json").write_text(manifest if isinstance(manifest, str) else json.dumps(manifest))
+            try:
+                build(d / "manifest.json", **kw)
+            except SystemExit as e:
+                assert needle in str(e), (needle, str(e))
+                return
+            raise AssertionError(f"accepted: {needle}")
+
+        (d / "latin1.html").write_bytes("caf\xe9".encode("latin-1"))
+        one = lambda f: {"title": "T", "tabs": [{"label": "A", "file": f}]}
+        with tempfile.TemporaryDirectory() as outside:
+            (Path(outside) / "secret.html").write_text("secret")
+            try:
+                (d / "leak.html").symlink_to(Path(outside) / "secret.html")
+                rejects(one("leak.html"), "outside the pack")
+            except OSError:  # Windows without symlink rights
+                print("symlink case skipped")
+        rejects(one("index.html"), "index.html")
+        rejects(one("latin1.html"), "not UTF-8", mode="bundle")
+        rejects("{not json", "manifest")
+        rejects({"tabs": [{"label": "A", "file": "a.html"}]}, "title")
+        rejects({"title": "T", "tabs": [{"file": "a.html"}]}, "label")
+        rejects({"title": "T", "eras": "x", "tabs": [{"label": "A", "file": "a.html"}]}, "must be lists")
+        rejects(one("a.html"), "no eras", default_era="b")
+        rejects({**one("a.html"), "default_era": "b"}, "no eras")
+        try:
+            build(d / "nope.json")
+            raise AssertionError("accepted a missing manifest")
+        except SystemExit as e:
+            assert "nope.json" in str(e)
+    print("selfcheck ok")
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("manifest", nargs="?")
+    ap.add_argument("--mode", choices=["tabs", "bundle", "auto"])
+    ap.add_argument("--default-era")
+    ap.add_argument("--selfcheck", action="store_true")
+    a = ap.parse_args()
+    if a.selfcheck:
+        _selfcheck()
+        sys.exit()
+    if not a.manifest:
+        ap.error("manifest is required")
+    path, mode, n, size = build(a.manifest, a.mode, a.default_era)
+    print(json.dumps({"index": str(path), "mode": mode, "pages": n, "bytes": size}, ensure_ascii=False))

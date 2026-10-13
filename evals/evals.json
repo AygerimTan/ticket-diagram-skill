@@ -1,0 +1,19 @@
+{
+  "skill_name": "ticket-diagrams",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm new to this codebase. Can you make me diagrams of what actually happens when I run `archify deliver sequence spec.json out.html` — from the CLI entry to the HTML being written? Code is in the installed archify skill (git: if it's not a repo, say so).",
+      "expected_output": "Pack in English, no user config used, default/neutral conventions, sequence (+maybe lifecycle) diagrams with sources, evidence with head `no-git` and sha256 pins if not git",
+      "files": [],
+      "index_mode": "tabs"
+    },
+    {
+      "id": 2,
+      "prompt": "нарисуй, как работает сам скилл ticket-diagrams: от запроса пользователя до готового index.html — какие шаги, какие скрипты и файлы, где проверки. Код — в папке этого скилла.",
+      "expected_output": "Russian pack about the skill itself: sequence of the run (request → config → claims → evidence.py → archify validate/deliver/visual-check → build_index → screenshot → report) and a dataflow of pack files; claims cite SKILL.md and scripts; usually not a git repo → pinned by file hashes",
+      "files": [],
+      "index_mode": "tabs"
+    }
+  ]
+}

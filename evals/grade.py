@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Grade pack runs: grade.py <iteration-dir> [--evals evals.json]. Writes grading.json per run.
+
+Run layout: <iteration-dir>/eval-<id>-<name>/<config>/run-<n>/outputs/ (skill-creator's layout).
+The eval id in the dir name selects `index_mode` from evals.json.
+"""
+import argparse
+import json
+import re
+from pathlib import Path
+
+DISCLAIMER = re.compile(r"not a statement about|production|не подтвержд|не прод|не утвержден", re.I)
+# International numbers only; add your country's local format if your data uses it.
+# Also hits semver build tags (1.0.0+2024…) — check the evidence before failing a pack on it.
+PHONE = re.compile(r"\+(?:[\s()-]*\d){10,}")
+SOURCE = re.compile(r"\.[a-z0-9]{1,5}:\d+")
+
+
+def grade(run, index_mode):
+    out = run / "outputs"
+    idx = out / "index.html"
+    index = idx.read_text(encoding="utf-8", errors="replace") if idx.is_file() else ""
+    exp = []
+
+    def add(text, passed, evidence):
+        exp.append({"text": text, "passed": bool(passed), "evidence": evidence})
+
+    add("index.html exists", idx.is_file(), str(idx) if idx.is_file() else "missing")
+
+    evs = [json.loads(e.read_text(encoding="utf-8")) for e in out.glob("evidence*.json")]
+    srcs = [s for e in evs for s in e.get("sources", [])]
+    bad = [s for s in srcs if s.get("status") != "ok"]
+    add("evidence.json pins ≥5 claims to file:line, all ok", len(srcs) >= 5 and not bad,
+        f"{len(srcs)} claims in {len(evs)} file(s), {len(bad)} not ok" if evs else "no evidence.json")
+
+    checks = list(out.rglob("*.visual-check.json"))
+    passing = [c for c in checks if json.loads(c.read_text(encoding="utf-8")).get("status") == "pass"]
+    add("every diagram has a passing archify visual-check", checks and len(passing) == len(checks),
+        f"{len(passing)}/{len(checks)} pass")
+
+    specs = [p for p in out.glob("*.json") if '"diagram_type"' in p.read_text(errors="replace")[:400]]
+    with_src = [p for p in specs if SOURCE.search(p.read_text(errors="replace"))]
+    add("every diagram spec cites path:line itself", specs and len(with_src) == len(specs),
+        f"{len(with_src)}/{len(specs)} specs cite path:line")
+
+    shas = re.findall(r"\b[0-9a-f]{7,12}\b", index)
+    # Code outside git has head "no-git" (pinned by file hashes); read it from evidence, not prose.
+    nogit = any(v in ("no-git", "no-commits") for e in evs for v in e.get("heads", {}).values())
+    add("index note names commit SHAs (or code is pinned by file hashes)", bool(shas) or nogit,
+        ", ".join(sorted(set(shas))[:4]) or ("no-git" if nogit else "none"))
+    add("index note disclaims production/runs", DISCLAIMER.search(index),
+        "found" if DISCLAIMER.search(index) else "no disclaimer")
+
+    hits = [p.name for p in out.rglob("*") if p.suffix in (".json", ".html")
+            and PHONE.search(p.read_text(errors="replace"))]
+    add("no phone numbers copied into the pack", not hits, ", ".join(hits[:3]) or "none")
+
+    if index_mode == "bundle":
+        add("single-file index with era switch", "srcdoc" in index and "data-era" in index,
+            f"srcdoc={'srcdoc' in index}, eras={'data-era' in index}")
+    else:
+        add("light tabs index (iframe src, small file)", "docs=null" in index and len(index) < 50_000,
+            f"{len(index)} bytes, inlined={'docs=null' not in index}")
+    passed = sum(e["passed"] for e in exp)
+    return {"expectations": exp, "summary": {"passed": passed, "failed": len(exp) - passed,
+                                             "total": len(exp), "pass_rate": round(passed / len(exp), 2)}}
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("iteration")
+    ap.add_argument("--evals", default=Path(__file__).with_name("evals.json"))
+    a = ap.parse_args()
+    modes = {e["id"]: e["index_mode"] for e in json.loads(Path(a.evals).read_text(encoding="utf-8"))["evals"]}
+    for ev_dir in sorted(p for p in Path(a.iteration).iterdir() if p.is_dir()):
+        m = re.match(r"eval-(\d+)", ev_dir.name)
+        if not m or int(m.group(1)) not in modes:
+            raise SystemExit(f"{ev_dir.name}: no eval id matching {a.evals}")
+        for run in sorted(ev_dir.glob("*/run-*")):
+            g = grade(run, modes[int(m.group(1))])
+            (run / "grading.json").write_text(json.dumps(g, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(ev_dir.name, run.parent.name, run.name, g["summary"]["passed"], "/", g["summary"]["total"])
