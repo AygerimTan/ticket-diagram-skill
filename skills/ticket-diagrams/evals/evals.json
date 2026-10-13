@@ -11,7 +11,7 @@
     {
       "id": 2,
       "prompt": "нарисуй, как работает сам скилл ticket-diagrams: от запроса пользователя до готового index.html — какие шаги, какие скрипты и файлы, где проверки. Код — в папке этого скилла.",
-      "expected_output": "Russian pack about the skill itself: sequence of the run (request → config → claims → evidence.py → archify validate/deliver/visual-check → build_index → screenshot → report) and a dataflow of pack files; claims cite SKILL.md and scripts; usually not a git repo → pinned by file hashes",
+      "expected_output": "Russian pack about the skill itself: sequence of the run (request → config → claims → evidence.py → archify finalize (+ visual-check) → build_index → screenshot → report) and a dataflow of pack files; claims cite SKILL.md and scripts; usually not a git repo → pinned by file hashes",
       "files": [],
       "index_mode": "tabs"
     }

@@ -5,6 +5,7 @@ Run layout: <iteration-dir>/eval-<id>-<name>/<config>/run-<n>/outputs/ (skill-cr
 The eval id in the dir name selects `index_mode` from evals.json.
 """
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -33,12 +34,22 @@ def grade(run, index_mode):
     add("evidence.json pins ≥5 claims to file:line, all ok", len(srcs) >= 5 and not bad,
         f"{len(srcs)} claims in {len(evs)} file(s), {len(bad)} not ok" if evs else "no evidence.json")
 
-    checks = list(out.rglob("*.visual-check.json"))
-    passing = [c for c in checks if json.loads(c.read_text(encoding="utf-8")).get("status") == "pass"]
-    add("every diagram has a passing archify visual-check", checks and len(passing) == len(checks),
-        f"{len(passing)}/{len(checks)} pass")
-
     specs = [p for p in out.glob("*.json") if '"diagram_type"' in p.read_text(errors="replace")[:400]]
+    # A receipt counts only for the HTML as it is now: stale receipts from earlier rounds stay in checks/.
+    passed_sha = set()
+    for r in out.rglob("*.finalize-summary.json"):
+        try:
+            s = json.loads(r.read_text(encoding="utf-8"))
+        except ValueError:  # a broken receipt must not stop grading of other runs
+            continue
+        if s.get("status") == "pass":
+            passed_sha.add((s.get("artifact") or {}).get("sha256"))
+    pages = [out / (json.loads(p.read_text(encoding="utf-8")).get("meta", {}).get("output")
+                    or p.name.split(".")[0] + ".html") for p in specs]
+    ok = [h for h in pages if h.is_file() and hashlib.sha256(h.read_bytes()).hexdigest() in passed_sha]
+    add("every diagram's current HTML has a passing archify finalize", pages and len(ok) == len(pages),
+        f"{len(ok)}/{len(pages)} pages")
+
     with_src = [p for p in specs if SOURCE.search(p.read_text(errors="replace"))]
     add("every diagram spec cites path:line itself", specs and len(with_src) == len(specs),
         f"{len(with_src)}/{len(specs)} specs cite path:line")
