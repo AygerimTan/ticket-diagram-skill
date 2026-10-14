@@ -3,17 +3,24 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "I'm new to this codebase. Can you make me diagrams of what actually happens when I run `archify deliver sequence spec.json out.html` — from the CLI entry to the HTML being written? Code is in the installed archify skill (git: if it's not a repo, say so).",
+      "prompt": "I'm new to this codebase. Can you make me diagrams of what actually happens when I run `archify deliver sequence spec.json out.html` — from the CLI entry to the HTML being written? Code is in the installed archify skill (git: if it's not a repo, say so). Don't publish anything: save the pack locally and say in your report what you would have published and how.",
       "expected_output": "Pack in English, no user config used, default/neutral conventions, sequence (+maybe lifecycle) diagrams with sources, evidence with head `no-git` and sha256 pins if not git",
       "files": [],
       "index_mode": "tabs"
     },
     {
       "id": 2,
-      "prompt": "нарисуй, как работает сам скилл ticket-diagrams: от запроса пользователя до готового index.html — какие шаги, какие скрипты и файлы, где проверки. Код — в папке этого скилла.",
+      "prompt": "нарисуй, как работает сам скилл ticket-diagrams: от запроса пользователя до готового index.html — какие шаги, какие скрипты и файлы, где проверки. Код — в папке этого скилла. Don't publish anything: save the pack locally and say in your report what you would have published and how.",
       "expected_output": "Russian pack about the skill itself: sequence of the run (request → config → claims → evidence.py → archify finalize (+ visual-check) → build_index → screenshot → report) and a dataflow of pack files; claims cite SKILL.md and scripts; usually not a git repo → pinned by file hashes",
       "files": [],
       "index_mode": "tabs"
+    },
+    {
+      "id": 3,
+      "prompt": "make an artifact page for a new teammate about how archify's `finalize` command decides whether an HTML is accepted, and include tyhe diagram into the artifact. Code is in the installed archify skill. Don't publish anything: save the pack locally and say in your report what you would have published and how.",
+      "expected_output": "ticket-diagrams triggers (not hand-drawn SVG); English pack with sequence/workflow of finalize gates (validate → deliver → check → browser-check), claims pinned (no-git → file hashes), index built with --mode bundle, report names the private-artifact publish step it skipped",
+      "files": [],
+      "index_mode": "bundle"
     }
   ]
 }

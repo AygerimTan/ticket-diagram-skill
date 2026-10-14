@@ -8,13 +8,15 @@
 A Claude Code skill that turns "draw how this ticket's code works" into a pack of
 [Archify](https://github.com/tt-a1i/archify) diagrams. Every arrow is checked against the code at a
 named commit (`file:line`, pinned by SHA), and one `index.html` tabs through the diagrams, with
-optional Before / After eras. The pack never claims anything about production.
+optional Before / After eras. When the session can publish artifacts (Claude Code on claude.ai),
+the pack is published as a private artifact and you get a link (unless you say not to); otherwise it stays a local folder.
+The pack never claims anything about production.
 
 ## Requirements
 
 | Tool | Version | Used for |
 |---|---|---|
-| Archify skill | written against `3.0.1` | schemas, rendering, validation, visual check |
+| Archify skill | written against `3.1.0` | schemas, rendering, validation, visual check |
 | node | ≥ 18 | Archify CLI |
 | Python | ≥ 3.7 (stdlib only) | `scripts/*.py` |
 | git | ≥ 2.24 | pinning claims to commits (code outside git also works, pinned by file hash) |
@@ -33,7 +35,7 @@ npx skills add tt-a1i/archify -g -a claude-code -y && npx skills add AygerimTan/
 
 This puts both skills in `~/.claude/skills/` (only the skill folder; the preview media live on the
 `media` branch, which installs don't fetch). It installs Archify's current version; this skill was
-validated against Archify 3.0.1, and where a newer Archify disagrees, Archify's own `SKILL.md` wins.
+validated against Archify 3.1.0, and where a newer Archify disagrees, Archify's own `SKILL.md` wins.
 
 Restart Claude Code, then check:
 `cd ~/.claude/skills/ticket-diagrams && python3 scripts/evidence.py --selfcheck &&
@@ -53,7 +55,8 @@ Then ask Claude something like "draw how PROJ-123's order cancel works across se
   "code_roots": ["~/src/backend", "~/src/frontend"],
   "worktrees": "{repo}/.claude/worktrees/{ticket}",
   "docs": ["~/notes/architecture"],
-  "note_template": "Checked against code {refs}, {date}. Not a statement about production. {not_checked}"
+  "note_template": "Checked against code {refs}, {date}. Not a statement about production. {not_checked}",
+  "deliver": "artifact"
 }
 ```
 
@@ -71,16 +74,17 @@ config's `docs`, `examples` and `note_template` are ignored for projects outside
 
 ## Evals
 
-`skills/ticket-diagrams/evals/evals.json` holds two test prompts that run wherever this skill and Archify are installed:
+`skills/ticket-diagrams/evals/evals.json` holds three test prompts that run wherever this skill and Archify are installed:
 diagram Archify's own `deliver` command (English; the prompt asks whether Archify is a git checkout),
 and diagram this skill itself (Russian, checks a non-English pack; a plain copy, so it also tests
-pinning by file hashes). `skills/ticket-diagrams/evals/grade.py <iteration-dir>` grades runs laid out the way skill-creator
+pinning by file hashes); and an "include the diagram into the artifact" request that must use this
+skill and a single-file bundle. Every prompt tells the runner not to publish. `skills/ticket-diagrams/evals/grade.py <iteration-dir>` grades runs laid out the way skill-creator
 lays them out (`eval-<id>-<name>/<config>/run-<n>/outputs/`); add your own prompts against your
 repositories in a separate file and pass it with `--evals`.
 
 ## Archify changes
 
-Section 3 of `skills/ticket-diagrams/SKILL.md` names Archify flags, file names and layout limits as of `3.0.1`. If
+Section 3 of `skills/ticket-diagrams/SKILL.md` names Archify flags, file names and layout limits as of `3.1.0`. If
 Archify's CLI or its `SKILL.md` disagrees, Archify wins, and the skill tells the model to report the
 drift.
 

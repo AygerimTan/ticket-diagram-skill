@@ -4,7 +4,7 @@ description: >-
   Build a code-verified diagram pack for a ticket, feature or change — several Archify diagrams
   (sequence, architecture, data-flow, lifecycle, workflow) of how the code really works across services, every
   claim pinned to file:line at a git SHA, joined in one tabbed index.html with an honest "checked
-  against <ref>, not production" note. Use whenever someone asks to draw, visualize, map or explain a
+  against <ref>, not production" note, published as a private artifact when the session can. Use whenever someone asks to draw, visualize, map or explain a
   ticket's flow (JIRA-123, #456), a cross-service request path, "how does X work now / after this
   change", before-vs-after of a branch, the services/DBs/tables behind a feature, or asks for
   "схемы"/"диаграммы" of a task — even if they name only one flow or never say "pack". Also use it,
@@ -13,8 +13,8 @@ description: >-
   verify, use archify directly.
 license: MIT
 metadata:
-  version: "1.2.0"
-  archify: "3.0.1"
+  version: "1.3.0"
+  archify: "3.1.0"
 ---
 
 # Ticket diagrams
@@ -30,7 +30,8 @@ short part. Docs, tickets and wikis are *hints* about where to look, never proof
 Scripts live next to this file. Below, `SKILL_DIR` means this skill's directory and
 `ARCHIFY` means `cd <pack> && node <archify-dir>/bin/archify.mjs` — archify resolves `meta.output`
 against the working directory, so it runs from the pack. Use absolute paths in every other command:
-the shell cwd does not persist between calls.
+the shell cwd does not persist between calls. Each script's interface is given where it is used —
+don't read their source (run one with `--help` if unsure).
 
 ## 0. Setup — config and tools
 
@@ -51,6 +52,7 @@ ignore its `docs`, `examples` and `note_template` (they belong to other code) an
 | `docs` | none | Paths or URLs of design docs/notes to skim for context |
 | `examples` | none | Earlier packs the user likes — follow their tone and depth, not their geometry (§3 sizes win) |
 | `note_template` | see §4 | Honesty line; placeholders `{refs}` (heads as `repo@ref sha`), `{date}`, `{not_checked}` |
+| `deliver` | `artifact` when the session can publish a private artifact and nobody said not to, else `folder` | How the pack reaches the user — see §4 Delivery |
 
 A pack inside a repo is untracked noise in `git status` (~2 MB per diagram: page ~0.8 MB, checks
 ~1 MB or more) — mention it, and suggest a `.gitignore` entry or an `output_dir` outside the repo.
@@ -66,7 +68,7 @@ state.
 `~/.claude/skills/archify`, `~/.agents/skills/archify`, `<repo>/.claude/skills/archify`. Then load
 its `SKILL.md` — it owns schemas, layout, validation and delivery. Not installed → stop and tell the
 user: it is MIT, from https://github.com/tt-a1i/archify; don't hand-draw a substitute. This skill was
-written against archify `3.0.1` (`<archify-dir>/skill-release.json`). Where archify's CLI or
+written against archify `3.1.0` (`<archify-dir>/skill-release.json`). Where archify's CLI or
 `SKILL.md` contradicts §3, archify wins — follow it and report the drift. Archify's own default
 folder (`.archify/…`) does not apply: the pack's `output_dir` is the location the user named.
 `deliver`/`finalize` run archify's update check inside their receipt; when the run must not touch
@@ -168,31 +170,32 @@ fine for several repos at once; you still pin their `file:line` with the script.
 Follow archify's fast authoring path. Pack-specific choices on top of it:
 
 - **Type.** Request chains → `sequence`; services/DBs → `architecture`; status machines →
-  `lifecycle`; pipelines/tables → `dataflow`; processes, CI/CD, runbooks → `workflow`.
+  `lifecycle`; pipelines/tables → `dataflow`; processes, CI/CD, runbooks → `workflow`. Also: tables,
+  columns and keys a change touches → `erd`; interfaces and their implementations → `class`; module
+  or repo layout → `tree`; release or incident order across repos → `timeline`; where a request
+  spends its time → `waterfall`, only with real timings (traces, logs) — otherwise don't draw it.
 - **Files.** `<slug>.<type>.json` → `<slug>.html`, with `meta.output: "<slug>.html"` (required; a
   relative path, resolved against the pack — see `ARCHIFY` above); before/after:
   `<slug>-before.*`, `<slug>-after.*`.
 - **Language.** Configured/request language; code identifiers, routes and tables stay as in code.
-  For a language other than `en`/`zh-CN`, set `meta.locale` (e.g. `ru`) **and** copy
+  Built-in viewer languages are in `<archify-dir>/locales/` (en, zh-CN, zh-TW, es, ko in 3.1.0).
+  For another language set `meta.locale` (e.g. `ru`) **and** copy
   `<archify-dir>/examples/locales/<lang>.json` into `meta.translations` — never a non-built-in
-  locale without translations. `finalize` records the coverage in its receipt
-  (`checks/<slug>.review-<n>/<slug>.finalize.json`; ru in 3.0.1: 423/438 keys) — say in the index
-  note that the rest of the viewer UI is English (short: "UI частично англ."). No catalog for the
-  language → omit `locale` and say the viewer UI is English.
-- **Quality.** `meta.quality_profile: "showcase"`. A sequence with ≥5 participants →
-  `meta.column_fit: "spread"` and a viewBox width around 1000–1100: wider failed
-  `composition/desktop-readability` in test runs. If `finalize` returns
+  locale without translations. `finalize` warns `i18n/translation-coverage` with the coverage (ru
+  in 3.1.0: 461/486) — say in the index note that the rest of the viewer UI is English (short: "UI
+  частично англ."). No catalog for the language → omit `locale` and say the viewer UI is English.
+- **Quality.** `meta.quality_profile: "showcase"`. If `finalize` returns
   `layoutReviewRecommendation`, do its one bounded retry.
-- **Sources.** `path:line` relative to the repo (or project root). Sequence: also in each message's
-  `note` — but archify hides notes at the default zoom (sequence and lifecycle alike; shown at ≥175%
-  zoom, on focus or hover) — so key sources (entry point, deciding branch, the write) go on cards
-  too. Architecture/dataflow connections have no `note` — put their sources in cards. Every card
+- **Sources.** `path:line` relative to the repo (or project root). Sequence: also in each message's `note` — archify 3.1.0 shows notes at the default
+  zoom, and each one adds height, so keep a note to one line — its `path:line` — and budget it (§3 Size); key
+  sources (entry point, deciding branch, the write) also go on cards. Architecture/dataflow connections have no `note` — put their sources in cards. Every card
   item cites its own `path:line` (a basename is fine when unique in the pack); "see evidence.json"
-  is not a source. For a single committed repo with an `origin`, also set `meta.repository`
-  (credential-free URL, 40-hex revision, and `link_mode: "local-only"` unless the origin is a
-  canonical GitHub/Gitee HTTPS URL — otherwise `repository-evidence/links-unsupported`) and node
-  `sources` and pass `--repo-root`: archify then
-  verifies those lines itself. It covers nodes only, not edges, and it does not replace
+  is not a source. For a single committed repo whose `origin` is an HTTPS URL on GitHub, Gitee or GitLab
+  (self-managed too, with `provider: "gitlab"`), also set `meta.repository` (credential-free URL, 40-hex
+  revision, `link_mode: "web"`), node `sources`, and pass `--repo-root`: archify then verifies
+  those lines itself and turns them into links to `file:line` at that commit — the code links a
+  reader expects. A private host needs the reader logged in; say so in the report. An SSH origin
+  or another host → `link_mode: "local-only"` (keep the origin as is — never rewrite SSH as HTTPS). It covers nodes only, not edges, and it does not replace
   `evidence.py`. Outside git it is unavailable.
 - **Cards.** 2–3: what is drawn; what is code fact vs UNVERIFIED. Keep each to ~3 items of ~60
   chars; archify's overflow diagnostics name the exact px to trim.
@@ -215,50 +218,45 @@ Follow archify's fast authoring path. Pack-specific choices on top of it:
   start just below it — that is expected in archify 3, don't chase it with wider viewBoxes (they
   fail readability). A diagram that doesn't fit becomes numbered tabs ("1 · OTP",
   "2 · Account"); a full-length tab is optional and labelled as scrolling.
-  - Sequence: message `y` in `[160, height − 83]`, and the canvas needs room for the legend:
-    height ≥ last message `y` + 104, or + 120 when it has a `note` (activations and segments can
-    push it further; archify names the exact minimum), or omit `viewBox` and let it grow. Roughly
-    ≤8–9 messages at a 34–40px step.
-  - Lifecycle: `schema_version: 2`, omit `viewBox` (the canvas sizes itself). One row per lane —
-    `main` first (required), `terminal` last — titled from `lanes[].label`, so write labels in the
-    pack's language. `col` 0–4 is a shared grid; put an interruption or exit in the column of the
-    state it leaves. In test runs a v2 lifecycle was the one type that kept its cards on the first
-    screen.
-  - Dataflow: ≤4 stages per diagram with short labels; rows sit at y 128/242/356/…, so two rows
-    need a viewBox height of ~380+, three ~490+. Keep the `viewBox`: in a test run the default canvas
-    shrank text. Flows need labels (archify suggests `labelAt`/`labelDy` on overlaps). More than 2–3
-    labelled flows into or out of one node rarely cleared archify's label checks — merge sources or
-    split the diagram.
+  - Sequence: omit `viewBox` and `column_fit` — the canvas grows and columns spread by default.
+    With an explicit `viewBox`, message `y` stays in `[160, height − 83]` and height ≥ last
+    message `y` + 104 (+ 120 with a `note`); archify names the exact minimum. Notes cost
+    44/55/66 px for 1/2/3 lines: nine messages with 2–3-line notes overflowed the first screen in a
+    test run; with one-line notes keep to ~6–7 messages, without notes ~8–9.
+  - Lifecycle: `schema_version: 3` with `mainPath` (the happy-path state ids, in order); layout is
+    automatic — no lanes, columns or `viewBox` (a 3.0 v2 file fails validation). Write state
+    labels in the pack's language.
+  - Dataflow: ≤4 stages per diagram with short labels; omit `viewBox` and node widths so archify
+    fits the canvas and keeps text readable (showcase growth applies only then). Flows need
+    labels (archify suggests `labelAt`/`labelDy` on overlaps). More than 2–3 labelled flows into
+    or out of one node rarely cleared archify's label checks — merge sources or split the diagram.
 
-Per diagram, one diagram at a time (archify locks the output dir):
+Finalize every diagram in **one** shell call, one after another — archify holds one lock per
+output directory, so a parallel run fails with `delivery/concurrent-attempt`:
 
 ```bash
-ARCHIFY finalize <type> <slug>.<type>.json <slug>.html \
-  --quality showcase --out-dir checks/<slug>.review-<n> --json
+cd <pack> && mkdir -p checks && for s in <slug>:<type> <slug2>:<type2>; do slug=${s%%:*}; type=${s##*:}
+  node <archify-dir>/bin/archify.mjs finalize "$type" "$slug.$type.json" "$slug.html" \
+    --quality showcase --out-dir "checks/$slug.review-<n>" --json > "checks/$slug.finalize.out" \
+    && echo "PASS $slug" || echo "FAIL $slug"; done
 ```
 
-`finalize` validates, delivers, checks and browser-checks, stopping at the first failing gate; a
-non-zero exit is failure — fix the JSON and rerun it whole, into a **new** `review-<n>` dir (reusing
-one after the HTML changed fails with `viewer/evidence-path-conflict`). Don't pre-run `validate`;
-standalone commands are for diagnosis. A non-zero exit means the HTML is not accepted even
-if `deliver` already replaced it; a deliver-stage failure can also leave `*.delivery-pending.json`,
-which blocks every checker until a later delivery passes. Never move `<slug>.delivery.json`: it
-must stay next to the HTML for provenance checks.
+`finalize` validates, delivers, checks and browser-checks, stopping at the first failing gate.
+`FAIL` means the HTML is not accepted even if `deliver` already replaced it: read that slug's
+`checks/<slug>.finalize.out`, fix the JSON and rerun only that slug, into a **new** `review-<n>`
+dir (reusing one after the HTML changed fails with `viewer/evidence-path-conflict`). Don't
+pre-run `validate`; standalone commands are for diagnosis. A deliver-stage failure can also leave
+`*.delivery-pending.json`, which blocks every checker until a later delivery passes. Never move
+`<slug>.delivery.json`: it must stay next to the HTML for provenance checks.
 
-If `finalize` reports `internal/unclassified` "Renderer failed before emitting a structured
-diagnostic" on a pack with `meta.translations`, archify misread its own coverage line (3.0.1). See
-the real error by running the renderer directly —
-`ARCHIFY_QUALITY_PROFILE=showcase node <archify-dir>/renderers/<type>/render-<type>.mjs <json>
-<pack>/checks/probe.html` — or by validating a copy without `locale`/`translations`.
-
-After it passes, get images to look at (archify calls this review evidence, not a gate):
-`ARCHIFY visual-check <slug>.html --summary --require-provenance --out-dir checks/<slug>.review-<n>`.
-Look at `<slug>.visual-check.1440x900.dark.png` there yourself — the receipt does not judge
-readability — and shoot the page at the index viewport:
-`screenshot.py <html> <pack>/checks/<slug>.page.1440x830.png 1440x830`. `viewer/viewport-overflow`
-(or `viewer/diagram-clipped`) means split or compact the diagram. A pass with an auto-sized canvas
-may still scroll vertically — archify accepts that, so your 1440×830 shot is what tells you whether
-the diagram is on the first screen. Report unresolved diagnostics truthfully.
+When all pass, take every diagram's images in **one** shell call:
+`ARCHIFY visual-check <slug>.html --summary --require-provenance --out-dir checks/<slug>.review-<n>`
+(review evidence, not a gate; its PNGs are the only image export you can produce from the shell) and
+`python3 SKILL_DIR/scripts/screenshot.py <pack>/<slug>.html <pack>/checks/<slug>.page.1440x830.png 1440x830`.
+Look at each page shot yourself — the receipts don't judge readability: diagram and legend on
+the first screen, legend labels not running into each other. Open the visual-check PNGs only when
+a diagnostic points at layout. `viewer/viewport-overflow` (or `viewer/diagram-clipped`) means split
+or compact the diagram. Report unresolved diagnostics truthfully.
 
 Every helper or temporary file tied to the pack (claim generators, receipts, page shots, probes) goes
 in `<pack>/checks/` — never in a shared scratchpad, where a parallel run can overwrite it, and never
@@ -291,17 +289,27 @@ python3 SKILL_DIR/scripts/build_index.py <pack>/manifest.json   # --mode tabs|bu
 - **bundle** (eras, or >4 pages) — every page inlined into one sandboxed, CSP-locked file
   (~0.8 MB per diagram). Share one file.
 
-**Artifact, page or link.** When the diagrams go into an artifact, a hosted page or a link, build
-with `--mode bundle` and publish (or hand over) that one `index.html`: a tabs index loads sibling
-files, which a single published page does not have, so its tabs come up empty. Repeat the §6
-click-check on the published copy where you can open it. If the request names an existing artifact
-or page, the pack still goes out as its own artifact (a CSP-locked bundle, not a fragment to splice
-in); once it has a URL, reference it from the existing one (a link where the host allows links,
-otherwise the title). A doc that can't host HTML gets the dark 1440×900 PNGs from the latest
-`checks/<slug>.review-<n>/`, the note text under them and a pointer to the pack (URL or path) — a
-diagram without the note reads as production truth. Don't redraw the diagrams by hand — that drops
-the code checks. Where the host sandboxes the page without downloads (claude.ai artifacts do),
-Archify's PNG/SVG download exports won't work; say so in the report.
+**Delivery.** Told not to publish, or asked for files → `deliver: folder`, mode by page count
+(above); only a request that itself asks for an artifact or page still gets the bundle you would
+have published. Otherwise `deliver: artifact` (the default when the session has a tool that publishes a
+private artifact or page — e.g. Claude Code's Artifact tool; never a file host or a browser
+automation): build with `--mode bundle` and, once §6 passes, publish that one `index.html` privately — it is a
+finished page, so publish the file as is, no template. A tabs index loads sibling files, which a
+single published page doesn't have, so its tabs would come up empty. The local pack stays: it holds
+the evidence and receipts. To update, republish the same file if the tool keeps the URL that way.
+Publishing distributes the pack: it must carry no secrets or personal data (§2). No such tool, no
+private visibility, or the upload is refused (too large) → `deliver: folder` (keep the bundle you
+built), and say why. Repeat the §6 click-check on the published copy where you can open
+it.
+
+If the request names an existing artifact or page, the pack still goes out as its own artifact (a
+CSP-locked bundle, not a fragment to splice in); once it has a URL, reference it from the existing
+one (a link where the host allows links, otherwise the title). A doc that can't host HTML gets the
+dark 1440×900 PNGs from the latest `checks/<slug>.review-<n>/`, the note text under them and a
+pointer to the pack (URL or path) — a diagram without the note reads as production truth. Don't
+redraw the diagrams by hand — that drops the code checks. Where the host sandboxes the page without
+downloads (claude.ai artifacts do), Archify's PNG/SVG download exports won't work; say so in the
+report.
 
 The **note** (plain text) is the honesty line: refs and SHAs from `heads`, date, what was *not*
 checked. The index shows it on one line and cuts the rest behind "…", so keep it under ~200 chars,
@@ -330,7 +338,7 @@ shoot, then rebuild without the flag (the manifest's `default_era`, or the last 
 For a bundle, click every tab and era with `agent-browser`/playwright if available — srcdoc pages
 can fail silently. Fix what you see.
 
-Report briefly: index path and mode, tabs, per-diagram archify status, any skipped step (e.g.
+Report briefly: the artifact URL and its visibility (or the index path), mode, tabs, per-diagram archify status, any skipped step (e.g.
 archify's update check), evidence counts (ok/moved/missing/dirty/untracked), the UNVERIFIED list,
-which screenshots you looked at. Don't link the pack from docs, wikis or notes as a side effect —
-offer it.
+which screenshots you looked at. Beyond the delivery above, don't link the pack from
+docs, wikis or notes as a side effect — offer it.

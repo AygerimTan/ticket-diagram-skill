@@ -2,7 +2,7 @@
 """Grade pack runs: grade.py <iteration-dir> [--evals evals.json]. Writes grading.json per run.
 
 Run layout: <iteration-dir>/eval-<id>-<name>/<config>/run-<n>/outputs/ (skill-creator's layout).
-The eval id in the dir name selects `index_mode` from evals.json.
+The eval id in the dir name selects `index_mode` (tabs | bundle | any) from evals.json.
 """
 import argparse
 import hashlib
@@ -54,22 +54,35 @@ def grade(run, index_mode):
     add("every diagram spec cites path:line itself", specs and len(with_src) == len(specs),
         f"{len(with_src)}/{len(specs)} specs cite path:line")
 
-    shas = re.findall(r"\b[0-9a-f]{7,12}\b", index)
+    # A bundle inlines whole pages, so read the note from the manifest when there is one.
+    man = out / "manifest.json"
+    try:
+        manifest = json.loads(man.read_text(encoding="utf-8")) if man.is_file() else None
+    except ValueError:
+        manifest = None
+    if not isinstance(manifest, dict):
+        manifest = None
+    note = str(manifest.get("note") or "") if manifest else index
+    eras = manifest and manifest.get("eras")
+    shas = re.findall(r"\b[0-9a-f]{7,12}\b", note)
     # Code outside git has head "no-git" (pinned by file hashes); read it from evidence, not prose.
     nogit = any(v in ("no-git", "no-commits") for e in evs for v in e.get("heads", {}).values())
     add("index note names commit SHAs (or code is pinned by file hashes)", bool(shas) or nogit,
         ", ".join(sorted(set(shas))[:4]) or ("no-git" if nogit else "none"))
-    add("index note disclaims production/runs", DISCLAIMER.search(index),
-        "found" if DISCLAIMER.search(index) else "no disclaimer")
+    add("index note disclaims production/runs", DISCLAIMER.search(note),
+        "found" if DISCLAIMER.search(note) else "no disclaimer")
 
     hits = [p.name for p in out.rglob("*") if p.suffix in (".json", ".html")
             and PHONE.search(p.read_text(errors="replace"))]
     add("no phone numbers copied into the pack", not hits, ", ".join(hits[:3]) or "none")
 
     if index_mode == "bundle":
-        add("single-file index with era switch", "srcdoc" in index and "data-era" in index,
-            f"srcdoc={'srcdoc' in index}, eras={'data-era' in index}")
-    else:
+        # "srcdoc"/"data-era" also sit in the tabs index's script; only the era buttons and the
+        # missing docs=null tell a bundle apart.
+        add("single-file bundle index" + (" with era switch" if eras else ""),
+            index and "docs=null" not in index and (not eras or "<button data-era=" in index),
+            f"{len(index)} bytes, inlined={'docs=null' not in index}, eras={bool(eras)}")
+    elif index_mode == "tabs":
         add("light tabs index (iframe src, small file)", "docs=null" in index and len(index) < 50_000,
             f"{len(index)} bytes, inlined={'docs=null' not in index}")
     passed = sum(e["passed"] for e in exp)
@@ -83,6 +96,8 @@ if __name__ == "__main__":
     ap.add_argument("--evals", default=Path(__file__).with_name("evals.json"))
     a = ap.parse_args()
     modes = {e["id"]: e["index_mode"] for e in json.loads(Path(a.evals).read_text(encoding="utf-8"))["evals"]}
+    if not set(modes.values()) <= {"tabs", "bundle", "any"}:
+        raise SystemExit(f"index_mode must be tabs, bundle or any: {sorted(set(modes.values()))}")
     for ev_dir in sorted(p for p in Path(a.iteration).iterdir() if p.is_dir()):
         m = re.match(r"eval-(\d+)", ev_dir.name)
         if not m or int(m.group(1)) not in modes:
