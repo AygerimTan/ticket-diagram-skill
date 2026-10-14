@@ -13,7 +13,7 @@ description: >-
   verify, use archify directly.
 license: MIT
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
   archify: "3.1.0"
 ---
 
@@ -297,13 +297,14 @@ automation): build with `--mode bundle` and, once §6 passes, publish that one `
 finished page, so publish the file as is, no template. A tabs index loads sibling files, which a
 single published page doesn't have, so its tabs would come up empty. The local pack stays: it holds
 the evidence and receipts. To update, republish the same file if the tool keeps the URL that way.
-Archify's **Copy link** (focused node, route, lens) inside a bundle points at the index:
+Archify's **Copy link** (focused node, relation, route, lens) inside a bundle points at the index:
 `<index>#tab=<i>[&era=<id>]&reader=<state>`, and opening that address restores the tab, era and
 focus. The address is the manifest's `"url"` if set, else wherever the index was opened from. After
 the first publish, put the artifact link in `"url"`, rebuild and republish the same file — without
-it a published copy hands out the host's internal frame address. claude.ai doesn't pass `#…` into
-an artifact, so there the link opens the artifact on its first tab; full restore works in the local
-or a self-hosted copy. Say so in the report.
+it a published copy hands out the host's internal frame address. claude.ai passes neither `#…` nor
+`?…` into an artifact, so for a claude.ai `url` the copy is the artifact link plus where to go
+(`<url> — tab «X», era «Y», node «Z»`, in the manifest's `lang`, ru or en); a copy built with a local or
+self-hosted `url` keeps the full deep link. Say so in the report.
 Publishing distributes the pack: it must carry no secrets or personal data (§2). No such tool, no
 private visibility, or the upload is refused (too large) → `deliver: folder` (keep the bundle you
 built), and say why. Repeat the §6 click-check on the published copy where you can open

@@ -50,7 +50,7 @@ CSP = ("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none
        # srcdoc pages inherit this policy: Archify inlines woff2 fonts and rasterises exports via blob: URLs.
        "font-src data:; img-src data: blob:;\">")
 
-JS = r"""const tabs=TABS,eras=ERAS,docs=DOCS,base=(PUBLIC_URL||location.href).replace(/#.*/,'');let era=DEFAULT_ERA,tab=0;
+JS = r"""const tabs=TABS,eras=ERAS,docs=DOCS,words=WORDS,base=(PUBLIC_URL||location.href).replace(/#.*/,'');let era=DEFAULT_ERA,tab=0;
 // A link copied inside a page reopens it: #tab=<i>&era=<id>&reader=<the page's own hash>.
 const h=new URLSearchParams(location.hash.slice(1)),ht=Number(h.get('tab')),he=h.get('era');let reader=h.get('reader');
 if(Number.isInteger(ht)&&ht>=0&&ht<tabs.length)tab=ht;
@@ -60,9 +60,21 @@ const attr=s=>s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'
 // srcdoc pages have no address of their own, so Archify's Copy link gives about:srcdoc unless told the index's.
 function page(f){const tpl=base+'#tab='+tab+(eras.length?'&era='+encodeURIComponent(era):'')+'&reader={state}';
 let d=docs[f].replace(/<html(?=[\s>])/i,m=>m+' data-reading-link-template="'+attr(tpl)+'"');
-if(reader){const r=JSON.stringify(reader).replace(/</g,'\\u003c');reader=null;
-d=d.replace(/<head(?=[\s>])[^>]*>/i,m=>m+'<script>location.hash='+r+'<\/script>')}
-return d}
+const lit=v=>JSON.stringify(v).replace(/</g,'\\u003c');let head='';
+if(reader){head+='<script>location.hash='+lit(reader)+'<\/script>';reader=null}
+if(words){const t=tabs[tab],e=eras.find(x=>x.id===era);
+head+='<script>('+captionCopy+')('+lit(base)+','+lit(words.tab+' «'+t.label+'»'+(t.files&&e?', '+words.era+' «'+e.label+'»':''))+','+lit(words)+')<\/script>'}
+return head?d.replace(/<head(?=[\s>])[^>]*>/i,m=>m+head):d}
+// Runs inside the page (serialized): the host drops the link's #, so the copy says in words where to go.
+function captionCopy(B,C,W){B=new URL(B).href;
+const lab=id=>{const n=[...document.querySelectorAll('[data-node-id]')].find(e=>e.dataset.nodeId===id);return(n&&n.dataset.nodeLabel||id).replace(/\s+/g,' ').trim()};
+const fix=t=>{if(typeof t!=='string'||t.indexOf(B+'#')!==0)return t;
+const s=new URLSearchParams(new URLSearchParams(t.slice(B.length+1)).get('reader')||''),f=s.get('focus'),r=(s.get('route')||'').split('~'),l=s.get('lens'),rel=s.get('relation'),rc=/^(up|down)stream$/.test(s.get('reach'))&&W[s.get('reach')];
+return B+' — '+C+(f?', '+W.node+' «'+lab(f)+'»'+(rc?' ('+rc+')':''):r.length===2?', '+W.route+' «'+lab(r[0])+'» → «'+lab(r[1])+'»':l?', '+W.lens+' '+l:rel?', '+W.relation+' «'+rel+'»':'')};
+const c=navigator.clipboard;if(c&&c.writeText){const w=c.writeText.bind(c);c.writeText=t=>w(fix(t))}
+// Archify's fallback copies a selected textarea; setting .value drops the selection, so reselect.
+const x=document.execCommand.bind(document);document.execCommand=function(n){const a=document.activeElement;
+if(n==='copy'&&a&&a.tagName==='TEXTAREA'){a.value=fix(a.value);a.select()}return x.apply(null,arguments)}}
 function show(){const t=tabs[tab],f=pick(t),v=document.getElementById('v');
 if(docs)v.srcdoc=page(f);else v.src=f;
 document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',+b.dataset.tab===tab));
@@ -73,6 +85,11 @@ const n=document.querySelector('p[role=button]');
 if(n){const t=()=>n.setAttribute('aria-expanded',n.getAttribute('aria-expanded')!=='true');
 n.onclick=t;n.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();t()}}}
 show();"""
+
+WORDS_EN = {"tab": "tab", "era": "era", "node": "node", "route": "route", "lens": "lens", "relation": "relation",
+            "upstream": "upstream", "downstream": "downstream"}
+WORDS_RU = {"tab": "вкладка", "era": "эпоха", "node": "узел", "route": "маршрут", "lens": "линза", "relation": "связь",
+            "upstream": "вверх по потоку", "downstream": "вниз по потоку"}
 
 
 def js_literal(value):
@@ -150,9 +167,13 @@ def _build(manifest_path, mode, default_era):
     esc = html.escape
     era_nav = "".join(f'<button data-era="{esc(e["id"])}">{esc(e["label"])}</button>' for e in eras)
     tab_nav = "".join(f'<button role="tab" data-tab="{i}">{esc(t["label"])}</button>' for i, t in enumerate(tabs))
+    # ponytail: claude.ai is the one host known to drop # and ? before the artifact frame; add others as found.
+    words = None
+    if url and urlsplit(url).hostname == "claude.ai":
+        words = WORDS_RU if m.get("lang", "en").lower().startswith("ru") else WORDS_EN
     # One pass: a label containing "DOCS" must not be rewritten by a later substitution.
-    subs = {"TABS": tabs, "ERAS": eras, "DEFAULT_ERA": default_era, "DOCS": docs, "PUBLIC_URL": url}
-    script = re.sub(r"\b(TABS|ERAS|DEFAULT_ERA|DOCS|PUBLIC_URL)\b", lambda x: js_literal(subs[x.group()]), JS)
+    subs = {"TABS": tabs, "ERAS": eras, "DEFAULT_ERA": default_era, "DOCS": docs, "PUBLIC_URL": url, "WORDS": words}
+    script = re.sub(r"\b(TABS|ERAS|DEFAULT_ERA|DOCS|PUBLIC_URL|WORDS)\b", lambda x: js_literal(subs[x.group()]), JS)
     sandbox = ' sandbox="allow-scripts allow-downloads"' if docs else ""
     out = (
         f'<!doctype html><html lang="{esc(m.get("lang", "en"))}"><head><meta charset="utf-8">'
@@ -198,6 +219,17 @@ def _selfcheck():
             (d / "manifest.json").write_text(json.dumps(man))
             build(d / "manifest.json")
             assert f'base=("{url}"||' in (d / "index.html").read_text()
+            assert "words=null" in (d / "index.html").read_text(), "caption outside claude.ai"
+        man["url"] = "https://claude.ai/artifact/X"
+        (d / "manifest.json").write_text(json.dumps(man))
+        build(d / "manifest.json")
+        assert 'words={"tab": "tab"' in (d / "index.html").read_text(), "no caption on claude.ai"
+        man["lang"] = "ru"
+        (d / "manifest.json").write_text(json.dumps(man))
+        build(d / "manifest.json")
+        assert 'words={"tab": "вкладка"' in (d / "index.html").read_text()
+        cap = JS[JS.index("function captionCopy"):JS.index("function show")]
+        assert "<" not in cap, "captionCopy is injected verbatim into pages: no '<' allowed"
 
         def rejects(manifest, needle, **kw):
             (d / "manifest.json").write_text(manifest if isinstance(manifest, str) else json.dumps(manifest))
