@@ -15,7 +15,8 @@ manifest.json:
     {"label": "Servers", "files": {"before": "servers-before.html",
                                    "after": "servers-after.html"}}         # varies by era
   ],
-  "mode": "auto"                                   # optional; CLI flag wins
+  "mode": "auto",                                  # optional; CLI flag wins
+  "url": "https://host/published/index"           # optional; bundle Copy link points here
 }
 
 tabs   = small index, iframe src -> sibling files. Opens from disk, needs the folder.
@@ -27,6 +28,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 CSS = """*{box-sizing:border-box}
 :root{--bg:#0b1220;--fg:#e8effb;--muted:#b4c4d9;--line:#2c3c54;--btn:#18273a;--acc:#65d4f0;--ok:#7ce1b8}
@@ -48,10 +50,21 @@ CSP = ("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none
        # srcdoc pages inherit this policy: Archify inlines woff2 fonts and rasterises exports via blob: URLs.
        "font-src data:; img-src data: blob:;\">")
 
-JS = """const tabs=TABS,eras=ERAS,docs=DOCS;let era=DEFAULT_ERA,tab=0;
+JS = r"""const tabs=TABS,eras=ERAS,docs=DOCS,base=(PUBLIC_URL||location.href).replace(/#.*/,'');let era=DEFAULT_ERA,tab=0;
+// A link copied inside a page reopens it: #tab=<i>&era=<id>&reader=<the page's own hash>.
+const h=new URLSearchParams(location.hash.slice(1)),ht=Number(h.get('tab')),he=h.get('era');let reader=h.get('reader');
+if(Number.isInteger(ht)&&ht>=0&&ht<tabs.length)tab=ht;
+if(eras.some(e=>e.id===he))era=he;
 function pick(t){return t.file||t.files[era]}
+const attr=s=>s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+// srcdoc pages have no address of their own, so Archify's Copy link gives about:srcdoc unless told the index's.
+function page(f){const tpl=base+'#tab='+tab+(eras.length?'&era='+encodeURIComponent(era):'')+'&reader={state}';
+let d=docs[f].replace(/<html(?=[\s>])/i,m=>m+' data-reading-link-template="'+attr(tpl)+'"');
+if(reader){const r=JSON.stringify(reader).replace(/</g,'\\u003c');reader=null;
+d=d.replace(/<head(?=[\s>])[^>]*>/i,m=>m+'<script>location.hash='+r+'<\/script>')}
+return d}
 function show(){const t=tabs[tab],f=pick(t),v=document.getElementById('v');
-if(docs)v.srcdoc=docs[f];else v.src=f;
+if(docs)v.srcdoc=page(f);else v.src=f;
 document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',+b.dataset.tab===tab));
 document.querySelectorAll('[data-era]').forEach(b=>{b.setAttribute('aria-selected',b.dataset.era===era);b.disabled=!!t.file});}
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=+b.dataset.tab;show()});
@@ -108,6 +121,12 @@ def _build(manifest_path, mode, default_era):
         if pack.resolve() not in (pack / f).resolve().parents:
             sys.exit(f"page resolves outside the pack: {f}")
 
+    url = m.get("url")
+    if url is not None and not (isinstance(url, str) and len(url) < 3900 and "#" not in url and "{state}" not in url
+                                and urlsplit(url).scheme in ("http", "https", "file")
+                                and not (urlsplit(url).username or urlsplit(url).password)):
+        sys.exit(f"manifest 'url' must be an http(s) or file address without credentials, '#' or '{{state}}': {url!r}")
+
     mode = mode or m.get("mode", "auto")
     if mode == "auto":
         mode = "bundle" if eras or len(files) > 4 else "tabs"
@@ -132,8 +151,8 @@ def _build(manifest_path, mode, default_era):
     era_nav = "".join(f'<button data-era="{esc(e["id"])}">{esc(e["label"])}</button>' for e in eras)
     tab_nav = "".join(f'<button role="tab" data-tab="{i}">{esc(t["label"])}</button>' for i, t in enumerate(tabs))
     # One pass: a label containing "DOCS" must not be rewritten by a later substitution.
-    subs = {"TABS": tabs, "ERAS": eras, "DEFAULT_ERA": default_era, "DOCS": docs}
-    script = re.sub(r"\b(TABS|ERAS|DEFAULT_ERA|DOCS)\b", lambda x: js_literal(subs[x.group()]), JS)
+    subs = {"TABS": tabs, "ERAS": eras, "DEFAULT_ERA": default_era, "DOCS": docs, "PUBLIC_URL": url}
+    script = re.sub(r"\b(TABS|ERAS|DEFAULT_ERA|DOCS|PUBLIC_URL)\b", lambda x: js_literal(subs[x.group()]), JS)
     sandbox = ' sandbox="allow-scripts allow-downloads"' if docs else ""
     out = (
         f'<!doctype html><html lang="{esc(m.get("lang", "en"))}"><head><meta charset="utf-8">'
@@ -173,6 +192,12 @@ def _selfcheck():
         assert out.count("</script>") == 1, "inlined page leaked a </script>"
         assert "T &lt;x&gt;" in out and "font-src data:" in out
         assert '"label": "DOCS TABS"' in out, "placeholder substituted inside a label"
+        assert "base=(null||location.href)" in out, "copy-link base not substituted"
+        for url in ("https://example.test/a?x=1&y=$1", "file:///tmp/p/index.html"):
+            man["url"] = url
+            (d / "manifest.json").write_text(json.dumps(man))
+            build(d / "manifest.json")
+            assert f'base=("{url}"||' in (d / "index.html").read_text()
 
         def rejects(manifest, needle, **kw):
             (d / "manifest.json").write_text(manifest if isinstance(manifest, str) else json.dumps(manifest))
@@ -200,6 +225,9 @@ def _selfcheck():
         rejects({"title": "T", "eras": "x", "tabs": [{"label": "A", "file": "a.html"}]}, "must be lists")
         rejects(one("a.html"), "no eras", default_era="b")
         rejects({**one("a.html"), "default_era": "b"}, "no eras")
+        for bad in ("javascript:alert(1)", "https://a.test/{state}", "https://u:p@a.test/", "https://a.test/#x", 5,
+                    "https://a.test/" + "x" * 3900):
+            rejects({**one("a.html"), "url": bad}, "url")
         try:
             build(d / "nope.json")
             raise AssertionError("accepted a missing manifest")
