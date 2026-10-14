@@ -7,11 +7,13 @@ description: >-
   against <ref>, not production" note. Use whenever someone asks to draw, visualize, map or explain a
   ticket's flow (JIRA-123, #456), a cross-service request path, "how does X work now / after this
   change", before-vs-after of a branch, the services/DBs/tables behind a feature, or asks for
-  "схемы"/"диаграммы" of a task — even if they name only one flow or never say "pack". For one
-  generic diagram with no code to verify, use archify directly.
+  "схемы"/"диаграммы" of a task — even if they name only one flow or never say "pack". Also use it,
+  instead of hand-drawn SVG, when a diagram of code goes into an artifact, page or doc ("include the
+  diagram into the artifact", "add a diagram to the page"). For one generic diagram with no code to
+  verify, use archify directly.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   archify: "3.0.1"
 ---
 
@@ -288,6 +290,18 @@ python3 SKILL_DIR/scripts/build_index.py <pack>/manifest.json   # --mode tabs|bu
 - **tabs** (≤4 pages, no eras) — tiny `index.html`, iframes load sibling files. Share the folder.
 - **bundle** (eras, or >4 pages) — every page inlined into one sandboxed, CSP-locked file
   (~0.8 MB per diagram). Share one file.
+
+**Artifact, page or link.** When the diagrams go into an artifact, a hosted page or a link, build
+with `--mode bundle` and publish (or hand over) that one `index.html`: a tabs index loads sibling
+files, which a single published page does not have, so its tabs come up empty. Repeat the §6
+click-check on the published copy where you can open it. If the request names an existing artifact
+or page, the pack still goes out as its own artifact (a CSP-locked bundle, not a fragment to splice
+in); once it has a URL, reference it from the existing one (a link where the host allows links,
+otherwise the title). A doc that can't host HTML gets the dark 1440×900 PNGs from the latest
+`checks/<slug>.review-<n>/`, the note text under them and a pointer to the pack (URL or path) — a
+diagram without the note reads as production truth. Don't redraw the diagrams by hand — that drops
+the code checks. Where the host sandboxes the page without downloads (claude.ai artifacts do),
+Archify's PNG/SVG download exports won't work; say so in the report.
 
 The **note** (plain text) is the honesty line: refs and SHAs from `heads`, date, what was *not*
 checked. The index shows it on one line and cuts the rest behind "…", so keep it under ~200 chars,
