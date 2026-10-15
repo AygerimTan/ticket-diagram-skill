@@ -51,6 +51,9 @@ CSP = ("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none
        "font-src data:; img-src data: blob:;\">")
 
 JS = r"""const tabs=TABS,eras=ERAS,docs=DOCS,words=WORDS,base=(PUBLIC_URL||location.href).replace(/#.*/,'');let era=DEFAULT_ERA,tab=0;
+// Archify keeps viewer prefs (theme, motion, rail) in localStorage, which sandboxed pages lack: the index keeps them.
+const prefs=Object.create(null);
+try{const p=JSON.parse(localStorage.getItem('ticket-diagrams-prefs'));if(p&&typeof p==='object')for(const k in p)if(typeof p[k]==='string'&&k.length<=100&&p[k].length<=1000&&Object.keys(prefs).length<50)prefs[k]=p[k]}catch(_){}
 // A link copied inside a page reopens it: #tab=<i>&era=<id>&reader=<the page's own hash>.
 const h=new URLSearchParams(location.hash.slice(1)),ht=Number(h.get('tab')),he=h.get('era');let reader=h.get('reader');
 if(Number.isInteger(ht)&&ht>=0&&ht<tabs.length)tab=ht;
@@ -60,11 +63,15 @@ const attr=s=>s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'
 // srcdoc pages have no address of their own, so Archify's Copy link gives about:srcdoc unless told the index's.
 function page(f){const tpl=base+'#tab='+tab+(eras.length?'&era='+encodeURIComponent(era):'')+'&reader={state}';
 let d=docs[f].replace(/<html(?=[\s>])/i,m=>m+' data-reading-link-template="'+attr(tpl)+'"');
-const lit=v=>JSON.stringify(v).replace(/</g,'\\u003c');let head='';
+const lit=v=>JSON.stringify(v).replace(/</g,'\\u003c');let head='<script>('+shimStorage+')('+lit(prefs)+')<\/script>';
 if(reader){head+='<script>location.hash='+lit(reader)+'<\/script>';reader=null}
 if(words){const t=tabs[tab],e=eras.find(x=>x.id===era);
 head+='<script>('+captionCopy+')('+lit(base)+','+lit(words.tab+' «'+t.label+'»'+(t.files&&e?', '+words.era+' «'+e.label+'»':''))+','+lit(words)+')<\/script>'}
-return head?d.replace(/<head(?=[\s>])[^>]*>/i,m=>m+head):d}
+return d.replace(/<head(?=[\s>])[^>]*>/i,m=>m+head)}
+// Runs inside the page (serialized), before Archify reads its prefs; if it can't install, prefs just don't carry over.
+function shimStorage(P){const m=Object.assign(Object.create(null),P),post=(k,v)=>parent.postMessage({tdPref:[String(k),v]},'*');
+try{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in m?m[k]:null,
+setItem:(k,v)=>{m[k]=String(v);post(k,m[k])},removeItem:k=>{delete m[k];post(k,null)}}})}catch(_){}}
 // Runs inside the page (serialized): the host drops the link's #, so the copy says in words where to go.
 function captionCopy(B,C,W){B=new URL(B).href;
 const lab=id=>{const n=[...document.querySelectorAll('[data-node-id]')].find(e=>e.dataset.nodeId===id);return(n&&n.dataset.nodeLabel||id).replace(/\s+/g,' ').trim()};
@@ -84,6 +91,11 @@ document.querySelectorAll('[data-era]').forEach(b=>b.onclick=()=>{era=b.dataset.
 const n=document.querySelector('p[role=button]');
 if(n){const t=()=>n.setAttribute('aria-expanded',n.getAttribute('aria-expanded')!=='true');
 n.onclick=t;n.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();t()}}}
+if(docs)addEventListener('message',e=>{const p=e.data&&typeof e.data==='object'&&e.data.tdPref;
+if(e.source!==document.getElementById('v').contentWindow||!Array.isArray(p)||p.length!==2)return;const[k,val]=p;
+if(typeof k!=='string'||k.length>100||!(val===null||typeof val==='string'&&val.length<=1000))return;
+if(val===null)delete prefs[k];else if(k in prefs||Object.keys(prefs).length<50)prefs[k]=val;
+try{localStorage.setItem('ticket-diagrams-prefs',JSON.stringify(prefs))}catch(_){}});
 show();"""
 
 WORDS_EN = {"tab": "tab", "era": "era", "node": "node", "route": "route", "lens": "lens", "relation": "relation",
@@ -228,6 +240,9 @@ def _selfcheck():
         (d / "manifest.json").write_text(json.dumps(man))
         build(d / "manifest.json")
         assert 'words={"tab": "вкладка"' in (d / "index.html").read_text()
+        assert JS.index("'+shimStorage+'") < JS.index("'+captionCopy+'"), "storage shim must run first in a page"
+        shim = JS[JS.index("function shimStorage"):JS.index("function captionCopy")]
+        assert "<" not in shim, "shimStorage is injected verbatim into pages: no '<' allowed"
         cap = JS[JS.index("function captionCopy"):JS.index("function show")]
         assert "<" not in cap, "captionCopy is injected verbatim into pages: no '<' allowed"
 

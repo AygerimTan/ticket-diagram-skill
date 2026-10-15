@@ -13,7 +13,7 @@ description: >-
   verify, use archify directly.
 license: MIT
 metadata:
-  version: "1.3.2"
+  version: "1.3.3"
   archify: "3.1.0"
 ---
 
